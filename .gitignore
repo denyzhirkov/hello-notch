@@ -1,0 +1,4 @@
+.build/
+.tsk/
+.DS_Store
+xcuserdata/
