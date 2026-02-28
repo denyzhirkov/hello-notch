@@ -95,6 +95,7 @@ struct FlatSegmentPicker: View {
                         .foregroundColor(selection == m ? .white : .white.opacity(0.5))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 6)
+                        .contentShape(Rectangle())
                         .background(
                             selection == m
                                 ? Color.white.opacity(0.12)
@@ -121,15 +122,17 @@ struct FlatDateTimePicker: View {
     // Next 7 days starting from today
     private var days: [(label: String, date: Date)] {
         let today = cal.startOfDay(for: Date())
-        let df = DateFormatter()
-        df.dateFormat = "E d"
+        let shortWeekday = ["Su", "Mn", "Tu", "Wd", "Th", "Fr", "Sa"]
         return (0..<7).compactMap { offset -> (String, Date)? in
             guard let d = cal.date(byAdding: .day, value: offset, to: today) else { return nil }
             let label: String
             switch offset {
-            case 0: label = "Today"
-            case 1: label = "Tmrw"
-            default: label = df.string(from: d)
+            case 0: label = "Tdy"
+            case 1: label = "Tmr"
+            default:
+                let wd = shortWeekday[cal.component(.weekday, from: d) - 1]
+                let day = cal.component(.day, from: d)
+                label = "\(wd) \(day)"
             }
             return (label, d)
         }
@@ -160,6 +163,7 @@ struct FlatDateTimePicker: View {
                             .padding(.horizontal, 6)
                             .padding(.vertical, 5)
                             .frame(maxWidth: .infinity)
+                            .contentShape(Rectangle())
                             .background(isSelected ? Color.white.opacity(0.14) : Color.clear)
                             .cornerRadius(6)
                     }
@@ -246,6 +250,94 @@ struct FlatDateTimePicker: View {
     }
 }
 
+// MARK: - Flat Stepper Row
+
+struct FlatStepperRow: View {
+    let label: String
+    @Binding var value: Int
+    @Binding var unit: TimeUnit
+    @State private var showDecades = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .font(.system(size: 13))
+                .foregroundColor(.white.opacity(0.6))
+
+            HStack(spacing: 0) {
+                Button { if value > 1 { value -= 1 } } label: {
+                    Image(systemName: "minus")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                Text("\(value)")
+                    .font(.system(size: 14).monospacedDigit())
+                    .frame(minWidth: 28)
+                    .contentShape(Rectangle())
+                    .onTapGesture { showDecades.toggle() }
+                    .popover(isPresented: $showDecades, arrowEdge: .bottom) {
+                        decadesGrid
+                    }
+
+                Button { if value < 999 { value += 1 } } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .background(Color.white.opacity(0.07))
+            .cornerRadius(8)
+
+            HStack(spacing: 2) {
+                ForEach(TimeUnit.allCases, id: \.self) { u in
+                    Button { unit = u } label: {
+                        Text(u.rawValue)
+                            .font(.system(size: 12, weight: unit == u ? .semibold : .regular))
+                            .foregroundColor(unit == u ? .white : .white.opacity(0.4))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .contentShape(Rectangle())
+                            .background(unit == u ? Color.white.opacity(0.12) : Color.clear)
+                            .cornerRadius(6)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(2)
+            .background(Color.white.opacity(0.05))
+            .cornerRadius(8)
+        }
+    }
+
+    private var decadesGrid: some View {
+        let decades = stride(from: 10, through: 90, by: 10).map { $0 }
+        return HStack(spacing: 4) {
+            ForEach(decades, id: \.self) { d in
+                Button {
+                    value = d
+                    showDecades = false
+                } label: {
+                    Text("\(d)")
+                        .font(.system(size: 12, weight: .medium).monospacedDigit())
+                        .foregroundColor(.white.opacity(0.85))
+                        .frame(width: 30, height: 26)
+                        .background(Color.white.opacity(value == d ? 0.18 : 0.07))
+                        .cornerRadius(6)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(8)
+        .background(Color(white: 0.14))
+        .preferredColorScheme(.dark)
+    }
+}
+
 private let panelBg = Color(white: 0.12)
 
 // MARK: - Add Reminder View
@@ -325,51 +417,7 @@ struct AddReminderView: View {
         value: Binding<Int>,
         unit: Binding<TimeUnit>
     ) -> some View {
-        HStack(spacing: 8) {
-            Text(label)
-                .font(.system(size: 13))
-                .foregroundColor(.white.opacity(0.6))
-
-            HStack(spacing: 0) {
-                Button { if value.wrappedValue > 1 { value.wrappedValue -= 1 } } label: {
-                    Image(systemName: "minus")
-                        .font(.system(size: 11, weight: .semibold))
-                        .frame(width: 28, height: 28)
-                }
-                .buttonStyle(.plain)
-
-                Text("\(value.wrappedValue)")
-                    .font(.system(size: 14).monospacedDigit())
-                    .frame(minWidth: 28)
-
-                Button { if value.wrappedValue < 999 { value.wrappedValue += 1 } } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .semibold))
-                        .frame(width: 28, height: 28)
-                }
-                .buttonStyle(.plain)
-            }
-            .background(Color.white.opacity(0.07))
-            .cornerRadius(8)
-
-            HStack(spacing: 2) {
-                ForEach(TimeUnit.allCases, id: \.self) { u in
-                    Button { unit.wrappedValue = u } label: {
-                        Text(u.rawValue)
-                            .font(.system(size: 12, weight: unit.wrappedValue == u ? .semibold : .regular))
-                            .foregroundColor(unit.wrappedValue == u ? .white : .white.opacity(0.4))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(unit.wrappedValue == u ? Color.white.opacity(0.12) : Color.clear)
-                            .cornerRadius(6)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(2)
-            .background(Color.white.opacity(0.05))
-            .cornerRadius(8)
-        }
+        FlatStepperRow(label: label, value: value, unit: unit)
     }
 
     // MARK: - Every section
@@ -385,6 +433,7 @@ struct AddReminderView: View {
                             .foregroundColor(everyMode == m ? .white : .white.opacity(0.45))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 5)
+                            .contentShape(Rectangle())
                             .background(everyMode == m ? Color.white.opacity(0.12) : Color.clear)
                             .cornerRadius(6)
                     }
@@ -430,6 +479,7 @@ struct AddReminderView: View {
                         .foregroundColor(selected ? .white : .white.opacity(0.35))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 5)
+                        .contentShape(Rectangle())
                         .background(selected ? Color.white.opacity(0.14) : Color.clear)
                         .cornerRadius(6)
                 }
