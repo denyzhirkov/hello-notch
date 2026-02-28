@@ -7,6 +7,7 @@ final class OverlayController {
     private var panel: OverlayPanel?
     private var hostingView: NSHostingView<NotchView>?
     private var autoHideTimer: Timer?
+    private var reshowTimer: Timer?
     private var animationTask: Task<Void, Never>?
     private var currentNotch: NotchInfo?
 
@@ -43,7 +44,7 @@ final class OverlayController {
 
     private func startDueCheckTimer() {
         dueCheckTimer = Timer.scheduledTimer(
-            withTimeInterval: 30,
+            withTimeInterval: 5,
             repeats: true
         ) { [weak self] _ in
             Task { @MainActor in
@@ -64,6 +65,7 @@ final class OverlayController {
 
     func showPulse(message: String = "New item") {
         autoHideTimer?.invalidate()
+        reshowTimer?.invalidate()
         updateView(message: message)
 
         let screen = ScreenResolver.activeScreen()
@@ -84,15 +86,43 @@ final class OverlayController {
             showPulse(message: reminder.text)
         } else {
             currentReminder = nil
-            hide()
+            dismiss()
         }
     }
 
-    func hide() {
+    /// Hard dismiss — no re-show. Used by explicit user actions.
+    private func dismiss() {
         autoHideTimer?.invalidate()
         autoHideTimer = nil
+        reshowTimer?.invalidate()
+        reshowTimer = nil
         currentReminder = nil
+        collapsePanel()
+    }
 
+    /// Soft hide — collapses panel, schedules re-show if reminder is still due.
+    private func autoHide() {
+        autoHideTimer?.invalidate()
+        autoHideTimer = nil
+        let pending = currentReminder
+        currentReminder = nil
+        collapsePanel()
+
+        // Schedule re-show in 10s if the reminder is still due
+        if pending != nil {
+            reshowTimer?.invalidate()
+            reshowTimer = Timer.scheduledTimer(
+                withTimeInterval: 10,
+                repeats: false
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    self?.checkDueReminders()
+                }
+            }
+        }
+    }
+
+    private func collapsePanel() {
         let screen = ScreenResolver.activeScreen()
         let notch = ScreenResolver.notchInfo(on: screen)
         animateHeight(to: 0, notch: notch) { [weak self] in
@@ -110,7 +140,10 @@ final class OverlayController {
     }
 
     private func handleRightClick() {
-        hide()
+        if let reminder = currentReminder {
+            store.snooze(id: reminder.id)
+        }
+        dismiss()
     }
 
     // MARK: - View update
@@ -131,7 +164,7 @@ final class OverlayController {
             repeats: false
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.hide()
+                self?.autoHide()
             }
         }
     }

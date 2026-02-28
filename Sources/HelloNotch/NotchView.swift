@@ -13,6 +13,9 @@ struct NotchView: View {
 
     @State private var hoverZone: HoverZone = .none
     @State private var textOpacity: Double = 1.0
+    @State private var shimmerOffset: CGFloat = -1.0
+
+    private var isHovering: Bool { hoverZone != .none }
 
     private var notchShape: UnevenRoundedRectangle {
         UnevenRoundedRectangle(
@@ -34,46 +37,72 @@ struct NotchView: View {
                 // Main solid black
                 notchShape
                     .fill(.black)
-                    .shadow(color: .black.opacity(0.3), radius: 4, y: 3)
 
-                // Green highlight — radial glow from bottom-left corner
-                if hoverZone == .left {
-                    notchShape
+                // Green highlight — radial glow from bottom-left
+                notchShape
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                Color(hex: Config.hoverGreenColor).opacity(Config.hoverOpacity),
+                                Color(hex: Config.hoverGreenColor).opacity(0)
+                            ],
+                            center: .bottomLeading,
+                            startRadius: 0,
+                            endRadius: min(geo.size.width, geo.size.height) * 0.9
+                        )
+                    )
+                    .opacity(hoverZone == .left ? 1 : 0)
+
+                // Red highlight — radial glow from bottom-right
+                notchShape
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                Color(hex: Config.hoverRedColor).opacity(Config.hoverOpacity),
+                                Color(hex: Config.hoverRedColor).opacity(0)
+                            ],
+                            center: .bottomTrailing,
+                            startRadius: 0,
+                            endRadius: min(geo.size.width, geo.size.height) * 0.9
+                        )
+                    )
+                    .opacity(hoverZone == .right ? 1 : 0)
+
+                // Edge shimmer — light sweep along bottom edge
+                VStack {
+                    Spacer()
+                    Capsule()
                         .fill(
                             RadialGradient(
                                 colors: [
-                                    Color(hex: Config.hoverGreenColor).opacity(Config.hoverOpacity),
-                                    Color(hex: Config.hoverGreenColor).opacity(0)
+                                    .white.opacity(0.5),
+                                    .white.opacity(0)
                                 ],
-                                center: .bottomLeading,
+                                center: .center,
                                 startRadius: 0,
-                                endRadius: min(geo.size.width, geo.size.height) * 0.9
+                                endRadius: 30
                             )
                         )
+                        .frame(width: 60, height: 2)
+                        .offset(x: shimmerOffset * geo.size.width)
+                        .padding(.bottom, 1)
+                }
+                .clipShape(notchShape)
+                .id(pulseID)
+                .onAppear {
+                    shimmerOffset = -0.6
+                    withAnimation(.easeInOut(duration: 0.9).delay(0.35)) {
+                        shimmerOffset = 0.6
+                    }
                 }
 
-                // Red highlight — radial glow from bottom-right corner
-                if hoverZone == .right {
-                    notchShape
-                        .fill(
-                            RadialGradient(
-                                colors: [
-                                    Color(hex: Config.hoverRedColor).opacity(Config.hoverOpacity),
-                                    Color(hex: Config.hoverRedColor).opacity(0)
-                                ],
-                                center: .bottomTrailing,
-                                startRadius: 0,
-                                endRadius: min(geo.size.width, geo.size.height) * 0.9
-                            )
-                        )
-                }
-
-                // Text label
+                // Reminder text — fades on hover
                 VStack {
                     Spacer()
                     Text(message)
                         .font(.system(size: 10, weight: .regular))
-                        .foregroundStyle(.white.opacity(textOpacity))
+                        .foregroundStyle(.white)
+                        .opacity(isHovering ? 0.1 : textOpacity)
                         .padding(.bottom, 4)
                 }
                 .id(pulseID)
@@ -83,6 +112,33 @@ struct NotchView: View {
                         textOpacity = 0.25
                     }
                 }
+
+                // Action labels — appear on hover
+                HStack {
+                    // Done label (left)
+                    HStack(spacing: 3) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 8, weight: .bold))
+                        Text("Done")
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .foregroundColor(Color(hex: Config.hoverGreenColor))
+                    .opacity(isHovering ? (hoverZone == .left ? 0.8 : 0.25) : 0)
+
+                    Spacer()
+
+                    // Later label (right)
+                    HStack(spacing: 3) {
+                        Text("Later")
+                            .font(.system(size: 9, weight: .semibold))
+                        Image(systemName: "clock")
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                    .foregroundColor(Color(hex: Config.hoverRedColor))
+                    .opacity(isHovering ? (hoverZone == .right ? 0.8 : 0.25) : 0)
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 32)
 
                 // Invisible click zones
                 HStack(spacing: 0) {
@@ -95,6 +151,7 @@ struct NotchView: View {
                         .onTapGesture { onRight?() }
                 }
             }
+            .animation(.easeOut(duration: 0.2), value: hoverZone)
             .onContinuousHover { phase in
                 switch phase {
                 case .active(let location):

@@ -92,6 +92,13 @@ final class ReminderStore {
         }
     }
 
+    func snooze(id: UUID, seconds: TimeInterval = 60) {
+        if let idx = reminders.firstIndex(where: { $0.id == id }) {
+            reminders[idx].fireDate = Date().addingTimeInterval(seconds)
+            save()
+        }
+    }
+
     func remove(id: UUID) {
         reminders.removeAll { $0.id == id }
         save()

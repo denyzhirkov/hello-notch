@@ -3,7 +3,7 @@ import Foundation
 enum Config {
     static let expandedHeight: CGFloat = 54
     static let cornerRadius: CGFloat = 10
-    static let autoHideSeconds: TimeInterval = 5.0
+    static let autoHideSeconds: TimeInterval = 10.0
 
     // Calibrated manually on MacBook Pro 14" (1512x982) to align panel
     // with the physical notch. The API-reported notch rect is ~1pt wider
@@ -21,7 +21,7 @@ enum Config {
     static let softEdgeOpacity: Double = 0.2
 
     // Hover zone highlight colors
-    static let hoverGreenColor = "00FF00"
-    static let hoverRedColor = "FF0000"
-    static let hoverOpacity: Double = 0.15
+    static let hoverGreenColor = "00DD00"
+    static let hoverRedColor = "DD0000"
+    static let hoverOpacity: Double = 0.12
 }
