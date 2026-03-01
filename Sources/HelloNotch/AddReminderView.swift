@@ -138,17 +138,8 @@ struct FlatDateTimePicker: View {
         }
     }
 
-    private var selectedDayStart: Date {
-        cal.startOfDay(for: date)
-    }
-
-    private var hour: Int {
-        get { cal.component(.hour, from: date) }
-    }
-
-    private var minute: Int {
-        get { cal.component(.minute, from: date) }
-    }
+    private var hour: Int { cal.component(.hour, from: date) }
+    private var minute: Int { cal.component(.minute, from: date) }
 
     var body: some View {
         VStack(spacing: 8) {
@@ -182,7 +173,7 @@ struct FlatDateTimePicker: View {
 
                 flatMenu(
                     label: String(format: "%02d", hour),
-                    values: Array(0...23),
+                    values: hourValues,
                     format: { String(format: "%02d", $0) },
                     action: { setHour($0) }
                 )
@@ -193,34 +184,12 @@ struct FlatDateTimePicker: View {
 
                 flatMenu(
                     label: String(format: "%02d", minute),
-                    values: stride(from: 0, to: 60, by: 5).map { $0 },
+                    values: minuteValues,
                     format: { String(format: "%02d", $0) },
                     action: { setMinute($0) }
                 )
             }
         }
-    }
-
-    private func flatMenu(
-        label: String,
-        values: [Int],
-        format: @escaping (Int) -> String,
-        action: @escaping (Int) -> Void
-    ) -> some View {
-        Menu {
-            ForEach(values, id: \.self) { v in
-                Button(format(v)) { action(v) }
-            }
-        } label: {
-            Text(label)
-                .font(.system(size: 14, weight: .medium).monospacedDigit())
-                .foregroundColor(.white)
-                .frame(width: 36, height: 28)
-                .background(Color.white.opacity(0.07))
-                .cornerRadius(6)
-        }
-        .menuStyle(.borderlessButton)
-        .frame(width: 36)
     }
 
     private func selectDay(_ day: Date) {
@@ -315,7 +284,7 @@ struct FlatStepperRow: View {
     }
 
     private var decadesGrid: some View {
-        let decades = stride(from: 10, through: 90, by: 10).map { $0 }
+        let decades = Array(stride(from: 10, through: 90, by: 10))
         return HStack(spacing: 4) {
             ForEach(decades, id: \.self) { d in
                 Button {
@@ -337,6 +306,33 @@ struct FlatStepperRow: View {
         .preferredColorScheme(.dark)
     }
 }
+
+// MARK: - Shared flat menu
+
+private func flatMenu(
+    label: String,
+    values: [Int],
+    format: @escaping (Int) -> String,
+    action: @escaping (Int) -> Void
+) -> some View {
+    Menu {
+        ForEach(values, id: \.self) { v in
+            Button(format(v)) { action(v) }
+        }
+    } label: {
+        Text(label)
+            .font(.system(size: 14, weight: .medium).monospacedDigit())
+            .foregroundColor(.white)
+            .frame(width: 36, height: 28)
+            .background(Color.white.opacity(0.07))
+            .cornerRadius(6)
+    }
+    .menuStyle(.borderlessButton)
+    .frame(width: 36)
+}
+
+private let minuteValues = Array(stride(from: 0, to: 60, by: 5))
+private let hourValues = Array(0...23)
 
 private let panelBg = Color(white: 0.12)
 
@@ -458,7 +454,7 @@ struct AddReminderView: View {
     private var weekdayChips: some View {
         let symbols = Calendar.current.veryShortWeekdaySymbols // S M T W T F S
         // Reorder: Mon first → indices 1,2,3,4,5,6,0
-        let ordered = (1...6).map { $0 } + [0]
+        let ordered = Array(1...6) + [0]
 
         return HStack(spacing: 4) {
             ForEach(ordered, id: \.self) { idx in
@@ -499,7 +495,7 @@ struct AddReminderView: View {
 
             flatMenu(
                 label: String(format: "%02d", hour.wrappedValue),
-                values: Array(0...23),
+                values: hourValues,
                 format: { String(format: "%02d", $0) },
                 action: { hour.wrappedValue = $0 }
             )
@@ -510,33 +506,11 @@ struct AddReminderView: View {
 
             flatMenu(
                 label: String(format: "%02d", minute.wrappedValue),
-                values: stride(from: 0, to: 60, by: 5).map { $0 },
+                values: minuteValues,
                 format: { String(format: "%02d", $0) },
                 action: { minute.wrappedValue = $0 }
             )
         }
-    }
-
-    private func flatMenu(
-        label: String,
-        values: [Int],
-        format: @escaping (Int) -> String,
-        action: @escaping (Int) -> Void
-    ) -> some View {
-        Menu {
-            ForEach(values, id: \.self) { v in
-                Button(format(v)) { action(v) }
-            }
-        } label: {
-            Text(label)
-                .font(.system(size: 14, weight: .medium).monospacedDigit())
-                .foregroundColor(.white)
-                .frame(width: 36, height: 28)
-                .background(Color.white.opacity(0.07))
-                .cornerRadius(6)
-        }
-        .menuStyle(.borderlessButton)
-        .frame(width: 36)
     }
 
     // MARK: - Save
@@ -792,7 +766,7 @@ func showAddReminderPanel(onSave: @escaping (String, Date?, TimeInterval?, [Int]
 func showRemindersListPanel(store: ReminderStore) {
     let panel = makeFlatPanel(width: 320, height: 300)
 
-    final class State: ObservableObject {
+    @MainActor final class State: ObservableObject {
         @Published var reminders: [Reminder]
         let store: ReminderStore
 

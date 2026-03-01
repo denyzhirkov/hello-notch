@@ -24,12 +24,12 @@ struct Reminder: Codable, Identifiable {
         self.recurringWeekdays = recurringWeekdays
     }
 
-    /// Whether this is any kind of recurring reminder.
     var isRecurring: Bool {
         recurringInterval != nil || recurringWeekdays != nil
     }
 }
 
+@MainActor
 final class ReminderStore {
 
     private var reminders: [Reminder] = []
@@ -38,7 +38,8 @@ final class ReminderStore {
     init() {
         let appSupport = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask
-        ).first!.appendingPathComponent("HelloNotch")
+        ).first.map { $0.appendingPathComponent("HelloNotch") }
+            ?? FileManager.default.temporaryDirectory.appendingPathComponent("HelloNotch")
 
         try? FileManager.default.createDirectory(
             at: appSupport, withIntermediateDirectories: true
@@ -68,35 +69,33 @@ final class ReminderStore {
     }
 
     func markDone(id: UUID) {
-        if let idx = reminders.firstIndex(where: { $0.id == id }) {
-            if let weekdays = reminders[idx].recurringWeekdays,
-               let oldDate = reminders[idx].fireDate {
-                // Schedule-based: find next matching weekday+time
-                reminders[idx].fireDate = Self.nextWeekdayOccurrence(
-                    after: Date(),
-                    weekdays: weekdays,
-                    hour: Calendar.current.component(.hour, from: oldDate),
-                    minute: Calendar.current.component(.minute, from: oldDate)
-                )
-            } else if let interval = reminders[idx].recurringInterval,
-                      let oldDate = reminders[idx].fireDate {
-                var nextDate = oldDate + interval
-                while nextDate <= Date() {
-                    nextDate += interval
-                }
-                reminders[idx].fireDate = nextDate
-            } else {
-                reminders[idx].done = true
+        guard let idx = reminders.firstIndex(where: { $0.id == id }) else { return }
+
+        if let weekdays = reminders[idx].recurringWeekdays,
+           let oldDate = reminders[idx].fireDate {
+            reminders[idx].fireDate = Self.nextWeekdayOccurrence(
+                after: Date(),
+                weekdays: weekdays,
+                hour: Calendar.current.component(.hour, from: oldDate),
+                minute: Calendar.current.component(.minute, from: oldDate)
+            )
+        } else if let interval = reminders[idx].recurringInterval,
+                  let oldDate = reminders[idx].fireDate {
+            var nextDate = oldDate + interval
+            while nextDate <= Date() {
+                nextDate += interval
             }
-            save()
+            reminders[idx].fireDate = nextDate
+        } else {
+            reminders[idx].done = true
         }
+        save()
     }
 
     func snooze(id: UUID, seconds: TimeInterval = 60) {
-        if let idx = reminders.firstIndex(where: { $0.id == id }) {
-            reminders[idx].fireDate = Date().addingTimeInterval(seconds)
-            save()
-        }
+        guard let idx = reminders.firstIndex(where: { $0.id == id }) else { return }
+        reminders[idx].fireDate = Date().addingTimeInterval(seconds)
+        save()
     }
 
     func remove(id: UUID) {
@@ -106,7 +105,7 @@ final class ReminderStore {
 
     func dueReminders() -> [Reminder] {
         let now = Date()
-        return reminders.filter { !$0.done && $0.fireDate != nil && $0.fireDate! <= now }
+        return reminders.filter { !$0.done && ($0.fireDate.map { $0 <= now } ?? false) }
     }
 
     func next() -> Reminder? {
@@ -123,7 +122,6 @@ final class ReminderStore {
 
     // MARK: - Helpers
 
-    /// Find the next Date matching any of the given weekdays at the specified time.
     static func nextWeekdayOccurrence(
         after date: Date,
         weekdays: [Int],
@@ -131,8 +129,6 @@ final class ReminderStore {
         minute: Int
     ) -> Date {
         let cal = Calendar.current
-        // Try each of the next 8 days, pick the earliest match
-        var best: Date?
         for dayOffset in 0...7 {
             guard let candidate = cal.date(byAdding: .day, value: dayOffset, to: date) else { continue }
             let wd = cal.component(.weekday, from: candidate)
@@ -142,10 +138,9 @@ final class ReminderStore {
             comps.minute = minute
             comps.second = 0
             guard let d = cal.date(from: comps), d > date else { continue }
-            best = d
-            break
+            return d
         }
-        return best ?? date.addingTimeInterval(86400)
+        return date.addingTimeInterval(86400)
     }
 
     // MARK: - Persistence

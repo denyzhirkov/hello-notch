@@ -7,6 +7,7 @@ enum HoverZone {
 struct NotchView: View {
     let message: String
     let pulseID: UUID
+    var hasHardwareNotch: Bool = true
     var onLeft: (() -> Void)?
     var onRight: (() -> Void)?
     var onHoverChanged: ((Bool) -> Void)?
@@ -28,6 +29,7 @@ struct NotchView: View {
 
     var body: some View {
         GeometryReader { geo in
+            let earInset = hasHardwareNotch ? CGFloat(0) : Config.outerCornerRadius
             ZStack {
                 // Soft edge
                 notchShape
@@ -68,48 +70,48 @@ struct NotchView: View {
                     )
                     .opacity(hoverZone == .right ? 1 : 0)
 
-                // Edge shimmer — light sweep along bottom edge
-                VStack {
-                    Spacer()
-                    Capsule()
-                        .fill(
-                            RadialGradient(
-                                colors: [
-                                    .white.opacity(0.5),
-                                    .white.opacity(0)
-                                ],
-                                center: .center,
-                                startRadius: 0,
-                                endRadius: 30
+                // Shimmer + text — share single .id(pulseID)
+                Group {
+                    // Edge shimmer — light sweep along bottom edge
+                    VStack {
+                        Spacer()
+                        Capsule()
+                            .fill(
+                                RadialGradient(
+                                    colors: [
+                                        .white.opacity(0.5),
+                                        .white.opacity(0)
+                                    ],
+                                    center: .center,
+                                    startRadius: 0,
+                                    endRadius: 30
+                                )
                             )
-                        )
-                        .frame(width: 60, height: 2)
-                        .offset(x: shimmerOffset * geo.size.width)
-                        .padding(.bottom, 1)
+                            .frame(width: 60, height: 2)
+                            .offset(x: shimmerOffset * geo.size.width)
+                            .padding(.bottom, 1)
+                    }
+                    .clipShape(notchShape)
+
+                    // Reminder text — fades on hover
+                    VStack {
+                        Spacer()
+                        Text(message)
+                            .font(.system(size: 10, weight: .regular))
+                            .foregroundStyle(.white)
+                            .opacity(isHovering ? 0.15 : textOpacity)
+                            .padding(.bottom, Config.labelsBottomInset - 7)
+                    }
                 }
-                .clipShape(notchShape)
                 .id(pulseID)
                 .onAppear {
                     shimmerOffset = -0.6
                     withAnimation(.easeInOut(duration: 0.9).delay(0.35)) {
                         shimmerOffset = 0.6
                     }
-                }
-
-                // Reminder text — fades on hover
-                VStack {
-                    Spacer()
-                    Text(message)
-                        .font(.system(size: 10, weight: .regular))
-                        .foregroundStyle(.white)
-                        .opacity(isHovering ? 0.1 : textOpacity)
-                        .padding(.bottom, 4)
-                }
-                .id(pulseID)
-                .onAppear {
                     textOpacity = 1.0
                     withAnimation(.easeOut(duration: 1.0).delay(0.3)) {
-                        textOpacity = 0.25
+                        textOpacity = 0.4
                     }
                 }
 
@@ -138,7 +140,8 @@ struct NotchView: View {
                     .opacity(isHovering ? (hoverZone == .right ? 0.8 : 0.25) : 0)
                 }
                 .padding(.horizontal, 12)
-                .padding(.top, 32)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .padding(.bottom, Config.labelsBottomInset - 7)
 
                 // Invisible click zones
                 HStack(spacing: 0) {
@@ -151,11 +154,13 @@ struct NotchView: View {
                         .onTapGesture { onRight?() }
                 }
             }
+            .clipShape(notchShape)
             .animation(.easeOut(duration: 0.2), value: hoverZone)
             .onContinuousHover { phase in
                 switch phase {
                 case .active(let location):
-                    let newZone: HoverZone = location.x < geo.size.width / 2 ? .left : .right
+                    let bodyWidth = geo.size.width - 2 * earInset
+                    let newZone: HoverZone = location.x < bodyWidth / 2 ? .left : .right
                     if hoverZone == .none { onHoverChanged?(true) }
                     hoverZone = newZone
                 case .ended:
@@ -163,7 +168,54 @@ struct NotchView: View {
                     onHoverChanged?(false)
                 }
             }
+            .padding(.horizontal, earInset)
+            .overlay(alignment: .top) {
+                if !hasHardwareNotch {
+                    let r = Config.outerCornerRadius
+                    HStack(spacing: 0) {
+                        InvertedCorner(radius: r, isLeading: false)
+                            .fill(.black)
+                            .frame(width: r, height: r)
+                        Spacer()
+                        InvertedCorner(radius: r, isLeading: true)
+                            .fill(.black)
+                            .frame(width: r, height: r)
+                    }
+                }
+            }
         }
+    }
+}
+
+// MARK: - Inverted corner shape (concave ear for virtual notch)
+
+struct InvertedCorner: Shape {
+    var radius: CGFloat
+    var isLeading: Bool
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        if isLeading {
+            path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+            path.addArc(center: CGPoint(x: rect.maxX, y: rect.maxY),
+                        radius: radius,
+                        startAngle: .degrees(270),
+                        endAngle: .degrees(180),
+                        clockwise: true)
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        } else {
+            path.move(to: CGPoint(x: rect.maxX, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+            path.addArc(center: CGPoint(x: rect.minX, y: rect.maxY),
+                        radius: radius,
+                        startAngle: .degrees(270),
+                        endAngle: .degrees(360),
+                        clockwise: false)
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        }
+        path.closeSubpath()
+        return path
     }
 }
 

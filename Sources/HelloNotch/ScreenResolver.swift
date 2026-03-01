@@ -4,6 +4,7 @@ struct NotchInfo {
     let width: CGFloat
     let x: CGFloat          // global X of notch left edge
     let screenMaxY: CGFloat // top edge of screen (global)
+    let hasHardwareNotch: Bool
 }
 
 enum ScreenResolver {
@@ -15,7 +16,7 @@ enum ScreenResolver {
                 return screen
             }
         }
-        return NSScreen.main ?? NSScreen.screens[0]
+        return NSScreen.main ?? NSScreen.screens.first ?? NSScreen()
     }
 
     /// Detects notch geometry using auxiliaryTopLeftArea / auxiliaryTopRightArea.
@@ -29,7 +30,8 @@ enum ScreenResolver {
             return NotchInfo(
                 width: width,
                 x: notchLeft,
-                screenMaxY: screen.frame.maxY
+                screenMaxY: screen.frame.maxY,
+                hasHardwareNotch: true
             )
         }
         // Fallback for screens without notch
@@ -37,18 +39,29 @@ enum ScreenResolver {
         return NotchInfo(
             width: fallbackWidth,
             x: screen.frame.midX - fallbackWidth / 2,
-            screenMaxY: screen.frame.maxY
+            screenMaxY: screen.frame.maxY,
+            hasHardwareNotch: false
         )
     }
 
     /// Panel frame pinned to notch position, growing downward.
     /// Offset and width calibrated manually (see Config).
     static func panelFrame(height: CGFloat, notch: NotchInfo) -> NSRect {
-        NSRect(
-            x: notch.x + Config.notchXOffset,
-            y: notch.screenMaxY - height,
-            width: notch.width - Config.notchWidthShrink,
-            height: height
-        )
+        if notch.hasHardwareNotch {
+            return NSRect(
+                x: notch.x + Config.notchXOffset,
+                y: notch.screenMaxY - height,
+                width: notch.width - Config.notchWidthShrink,
+                height: height
+            )
+        } else {
+            let ear = Config.outerCornerRadius
+            return NSRect(
+                x: notch.x - ear,
+                y: notch.screenMaxY - height,
+                width: notch.width + 2 * ear,
+                height: height
+            )
+        }
     }
 }

@@ -1,8 +1,14 @@
 import Foundation
 
 enum Config {
+    // Calibrated manually: panel height when expanded over the notch area.
+    // 54pt for hardware notch (MacBook Pro 14"), 30pt for external monitors.
     static let expandedHeight: CGFloat = 54
+    static let expandedHeightNoNotch: CGFloat = 27
     static let cornerRadius: CGFloat = 10
+    // Action labels (Done/Later) pinned 14pt from bottom edge of the notch.
+    // Works for both heights: 54pt → labels at 40pt, 30pt → labels at 16pt.
+    static let labelsBottomInset: CGFloat = 14
     static let autoHideSeconds: TimeInterval = 10.0
 
     // Calibrated manually on MacBook Pro 14" (1512x982) to align panel
@@ -19,6 +25,9 @@ enum Config {
     // on each side, for a seamless blend with the physical notch edge.
     static let softEdgeExtent: CGFloat = 0.5
     static let softEdgeOpacity: Double = 0.2
+
+    // Inverted (concave) outer corners for virtual notch on non-notch screens
+    static let outerCornerRadius: CGFloat = 6
 
     // Hover zone highlight colors
     static let hoverGreenColor = "00DD00"

@@ -4,42 +4,92 @@ import SwiftUI
 @MainActor
 final class OverlayController {
 
-    private var panel: OverlayPanel?
-    private var hostingView: NSHostingView<NotchView>?
+    private struct ScreenEntry {
+        let panel: OverlayPanel
+        let hostingView: NSHostingView<NotchView>
+        let notch: NotchInfo
+        let displayID: CGDirectDisplayID
+    }
+
+    private var entries: [CGDirectDisplayID: ScreenEntry] = [:]
+    private var activeDisplayID: CGDirectDisplayID?
+
     private var autoHideTimer: Timer?
     private var reshowTimer: Timer?
     private var animationTask: Task<Void, Never>?
-    private var currentNotch: NotchInfo?
 
     let store = ReminderStore()
     private var currentReminder: Reminder?
     private var dueCheckTimer: Timer?
 
+    deinit {
+        dueCheckTimer?.invalidate()
+        autoHideTimer?.invalidate()
+        reshowTimer?.invalidate()
+        animationTask?.cancel()
+        NotificationCenter.default.removeObserver(self)
+    }
+
     // MARK: - Setup
 
     func setup() {
-        let screen = ScreenResolver.activeScreen()
-        let notch = ScreenResolver.notchInfo(on: screen)
-        let frame = ScreenResolver.panelFrame(height: 0, notch: notch)
+        rebuildPanels()
 
-        let panel = OverlayPanel(contentRect: frame)
-
-        let hostingView = NSHostingView(
-            rootView: NotchView(message: "", pulseID: UUID())
-        )
-        hostingView.wantsLayer = true
-        hostingView.layer?.backgroundColor = .clear
-
-        panel.contentView = hostingView
-
-        self.panel = panel
-        self.hostingView = hostingView
-        self.currentNotch = notch
-
-        panel.orderFrontRegardless()
-        panel.alphaValue = 0
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.rebuildPanels()
+            }
+        }
 
         startDueCheckTimer()
+    }
+
+    private func rebuildPanels() {
+        // Collapse and remove all existing panels
+        animationTask?.cancel()
+        animationTask = nil
+        for entry in entries.values {
+            entry.panel.orderOut(nil)
+        }
+        entries.removeAll()
+        activeDisplayID = nil
+
+        for screen in NSScreen.screens {
+            guard let displayID = displayID(for: screen) else { continue }
+
+            let notch = ScreenResolver.notchInfo(on: screen)
+            let frame = ScreenResolver.panelFrame(height: 0, notch: notch)
+
+            let panel = OverlayPanel(contentRect: frame)
+
+            let hostingView = NSHostingView(
+                rootView: NotchView(message: "", pulseID: UUID(), hasHardwareNotch: notch.hasHardwareNotch)
+            )
+            hostingView.wantsLayer = true
+            hostingView.layer?.backgroundColor = .clear
+
+            panel.contentView = hostingView
+            panel.orderFrontRegardless()
+            panel.alphaValue = 0
+
+            entries[displayID] = ScreenEntry(
+                panel: panel,
+                hostingView: hostingView,
+                notch: notch,
+                displayID: displayID
+            )
+        }
+    }
+
+    private func displayID(for screen: NSScreen) -> CGDirectDisplayID? {
+        guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
+            return nil
+        }
+        return CGDirectDisplayID(number.uint32Value)
     }
 
     private func startDueCheckTimer() {
@@ -66,16 +116,33 @@ final class OverlayController {
     func showPulse(message: String = "New item") {
         autoHideTimer?.invalidate()
         reshowTimer?.invalidate()
-        updateView(message: message)
 
         let screen = ScreenResolver.activeScreen()
-        let notch = ScreenResolver.notchInfo(on: screen)
-        currentNotch = notch
+        guard let targetID = displayID(for: screen),
+              let entry = entries[targetID] else { return }
 
-        panel?.alphaValue = 1
-        panel?.ignoresMouseEvents = false
+        // If a different panel was active, collapse it immediately
+        if let prevID = activeDisplayID, prevID != targetID, let prevEntry = entries[prevID] {
+            animationTask?.cancel()
+            let zeroFrame = ScreenResolver.panelFrame(height: 0, notch: prevEntry.notch)
+            prevEntry.panel.setFrame(zeroFrame, display: false)
+            prevEntry.panel.alphaValue = 0
+            prevEntry.panel.ignoresMouseEvents = true
+        }
 
-        animateHeight(to: Config.expandedHeight, notch: notch)
+        activeDisplayID = targetID
+
+        // Reset panel to zero height on the target screen before showing
+        let zeroFrame = ScreenResolver.panelFrame(height: 0, notch: entry.notch)
+        entry.panel.setFrame(zeroFrame, display: false)
+
+        updateView(message: message, entry: entry)
+
+        entry.panel.alphaValue = 1
+        entry.panel.ignoresMouseEvents = false
+
+        let height = entry.notch.hasHardwareNotch ? Config.expandedHeight : Config.expandedHeightNoNotch
+        animateHeight(to: height, entry: entry)
         scheduleAutoHide()
     }
 
@@ -123,11 +190,11 @@ final class OverlayController {
     }
 
     private func collapsePanel() {
-        let screen = ScreenResolver.activeScreen()
-        let notch = ScreenResolver.notchInfo(on: screen)
-        animateHeight(to: 0, notch: notch) { [weak self] in
-            self?.panel?.alphaValue = 0
-            self?.panel?.ignoresMouseEvents = true
+        guard let id = activeDisplayID, let entry = entries[id] else { return }
+        animateHeight(to: 0, entry: entry) { [weak self] in
+            entry.panel.alphaValue = 0
+            entry.panel.ignoresMouseEvents = true
+            self?.activeDisplayID = nil
         }
     }
 
@@ -169,10 +236,11 @@ final class OverlayController {
         }
     }
 
-    private func updateView(message: String) {
-        hostingView?.rootView = NotchView(
+    private func updateView(message: String, entry: ScreenEntry) {
+        entry.hostingView.rootView = NotchView(
             message: message,
             pulseID: UUID(),
+            hasHardwareNotch: entry.notch.hasHardwareNotch,
             onLeft: { [weak self] in
                 Task { @MainActor in self?.handleLeftClick() }
             },
@@ -189,12 +257,12 @@ final class OverlayController {
 
     private func animateHeight(
         to targetHeight: CGFloat,
-        notch: NotchInfo,
+        entry: ScreenEntry,
         completion: (() -> Void)? = nil
     ) {
         animationTask?.cancel()
 
-        let startHeight = panel?.frame.height ?? 0
+        let startHeight = entry.panel.frame.height
         let duration: Double = 0.35
         let steps = 42 // ~120fps over 0.35s
 
@@ -209,8 +277,8 @@ final class OverlayController {
                     : 1 - pow(-2 * progress + 2, 3) / 2
 
                 let h = startHeight + (targetHeight - startHeight) * t
-                let frame = ScreenResolver.panelFrame(height: h, notch: notch)
-                panel?.setFrame(frame, display: true)
+                let frame = ScreenResolver.panelFrame(height: h, notch: entry.notch)
+                entry.panel.setFrame(frame, display: true)
 
                 if i < steps {
                     try? await Task.sleep(nanoseconds: UInt64(duration / Double(steps) * 1_000_000_000))
