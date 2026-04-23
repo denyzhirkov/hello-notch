@@ -539,7 +539,7 @@ struct AddReminderView: View {
 
     // MARK: - Save
 
-    private func save() {
+    @MainActor private func save() {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
 

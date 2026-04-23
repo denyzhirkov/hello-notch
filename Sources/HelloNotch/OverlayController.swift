@@ -48,7 +48,7 @@ final class OverlayController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 self?.rebuildPanels()
             }
         }
@@ -61,7 +61,7 @@ final class OverlayController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 self?.checkDueReminders()
             }
         }
@@ -130,7 +130,7 @@ final class OverlayController {
             withTimeInterval: Config.dueCheckInterval,
             repeats: true
         ) { [weak self] _ in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 self?.checkDueReminders()
             }
         }
@@ -285,7 +285,7 @@ final class OverlayController {
             withTimeInterval: Config.autoHideSeconds,
             repeats: false
         ) { [weak self] _ in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 self?.autoHide()
             }
         }
@@ -297,13 +297,13 @@ final class OverlayController {
             pulseID: UUID(),
             hasHardwareNotch: entry.notch.hasHardwareNotch,
             onLeft: { [weak self] in
-                Task { @MainActor in self?.handleLeftClick() }
+                Task { @MainActor [weak self] in self?.handleLeftClick() }
             },
             onRight: { [weak self] in
-                Task { @MainActor in self?.handleRightClick() }
+                Task { @MainActor [weak self] in self?.handleRightClick() }
             },
             onHoverChanged: { [weak self] hovering in
-                Task { @MainActor in self?.handleHover(hovering) }
+                Task { @MainActor [weak self] in self?.handleHover(hovering) }
             }
         )
     }
