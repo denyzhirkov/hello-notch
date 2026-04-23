@@ -1,4 +1,22 @@
-.build/
-.tsk/
+# macOS
 .DS_Store
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Xcode
 xcuserdata/
+*.xcuserstate
+DerivedData/
+
+# Build artifacts (build-app.sh output)
+HelloNotch.app/
+*.dmg
+dmg-staging/
+
+# Tooling caches
+.kungfu/
+.tsk/
+.claude/settings.local.json

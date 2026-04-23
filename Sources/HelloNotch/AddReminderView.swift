@@ -141,6 +141,13 @@ struct FlatDateTimePicker: View {
     private var hour: Int { cal.component(.hour, from: date) }
     private var minute: Int { cal.component(.minute, from: date) }
 
+    private var hourBinding: Binding<Int> {
+        Binding(get: { hour }, set: { setHour($0) })
+    }
+    private var minuteBinding: Binding<Int> {
+        Binding(get: { minute }, set: { setMinute($0) })
+    }
+
     var body: some View {
         VStack(spacing: 8) {
             // Day chips
@@ -165,29 +172,11 @@ struct FlatDateTimePicker: View {
             .background(Color.white.opacity(0.05))
             .cornerRadius(8)
 
-            // Time: hour menu + minute menu
             HStack(spacing: 6) {
                 Image(systemName: "clock")
                     .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.35))
-
-                flatMenu(
-                    label: String(format: "%02d", hour),
-                    values: hourValues,
-                    format: { String(format: "%02d", $0) },
-                    action: { setHour($0) }
-                )
-
-                Text(":")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.white.opacity(0.3))
-
-                flatMenu(
-                    label: String(format: "%02d", minute),
-                    values: minuteValues,
-                    format: { String(format: "%02d", $0) },
-                    action: { setMinute($0) }
-                )
+                FlatTimePicker12h(hour24: hourBinding, minute: minuteBinding)
             }
         }
     }
@@ -307,6 +296,60 @@ struct FlatStepperRow: View {
     }
 }
 
+// MARK: - 12h time picker
+
+struct FlatTimePicker12h: View {
+    @Binding var hour24: Int  // 0–23
+    @Binding var minute: Int
+    var prefix: String = ""
+
+    private var hour12: Int {
+        let h = hour24 % 12
+        return h == 0 ? 12 : h
+    }
+    private var isAM: Bool { hour24 < 12 }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if !prefix.isEmpty {
+                Text(prefix)
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.5))
+            }
+
+            flatMenu(
+                label: "\(hour12)",
+                values: Array(1...12),
+                format: { "\($0)" },
+                action: { h in
+                    hour24 = isAM ? (h == 12 ? 0 : h) : (h == 12 ? 12 : h + 12)
+                }
+            )
+
+            Text(":")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(.white.opacity(0.3))
+
+            flatMenu(
+                label: String(format: "%02d", minute),
+                values: minuteValues,
+                format: { String(format: "%02d", $0) },
+                action: { minute = $0 }
+            )
+
+            Button { hour24 = (hour24 + 12) % 24 } label: {
+                Text(isAM ? "AM" : "PM")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(width: 36, height: 28)
+                    .background(Color.white.opacity(0.07))
+                    .cornerRadius(6)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
 // MARK: - Shared flat menu
 
 private func flatMenu(
@@ -332,9 +375,30 @@ private func flatMenu(
 }
 
 private let minuteValues = Array(stride(from: 0, to: 60, by: 5))
-private let hourValues = Array(0...23)
 
-private let panelBg = Color(white: 0.12)
+// MARK: - Frosted-glass background
+
+/// NSVisualEffectView wrapper. `.hudWindow` + `.behindWindow` gives true frosted glass
+/// that picks up the desktop beneath the panel (requires the hosting NSPanel to be
+/// non-opaque with a clear backgroundColor — `makeFlatPanel` already does that).
+struct VisualEffectBlur: NSViewRepresentable {
+    var material: NSVisualEffectView.Material = .hudWindow
+    var blendingMode: NSVisualEffectView.BlendingMode = .behindWindow
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = material
+        view.blendingMode = blendingMode
+        view.state = .active
+        view.isEmphasized = false
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        nsView.material = material
+        nsView.blendingMode = blendingMode
+    }
+}
 
 // MARK: - Add Reminder View
 
@@ -352,60 +416,41 @@ struct AddReminderView: View {
     @State private var selectedWeekdays: Set<Int> = Set(1...7) // all days by default
 
     var onSave: (String, Date?, TimeInterval?, [Int]?) -> Void
-    var onCancel: () -> Void
 
+    /// Content-only view (no chrome). Host provides background, frame, header.
     var body: some View {
-        VStack(spacing: 0) {
-            dragHandle
+        VStack(spacing: 14) {
+            FlatTextField(placeholder: "Reminder text...", text: $text)
+                .frame(height: 30)
+                .padding(.horizontal, 8)
+                .background(Color.white.opacity(0.07))
+                .cornerRadius(8)
 
-            VStack(spacing: 14) {
-                FlatTextField(placeholder: "Reminder text...", text: $text)
-                    .frame(height: 30)
-                    .padding(.horizontal, 8)
-                    .background(Color.white.opacity(0.07))
-                    .cornerRadius(8)
+            FlatSegmentPicker(selection: $mode)
 
-                FlatSegmentPicker(selection: $mode)
+            Group {
+                switch mode {
+                case .atTime:
+                    FlatDateTimePicker(date: $selectedTime)
 
-                Group {
-                    switch mode {
-                    case .atTime:
-                        FlatDateTimePicker(date: $selectedTime)
+                case .inInterval:
+                    flatStepper(label: "In", value: $intervalValue, unit: $intervalUnit)
 
-                    case .inInterval:
-                        flatStepper(label: "In", value: $intervalValue, unit: $intervalUnit)
-
-                    case .every:
-                        everySection
-                    }
-                }
-
-                Spacer()
-
-                HStack(spacing: 10) {
-                    Button("Cancel") { onCancel() }
-                        .buttonStyle(FlatButtonStyle())
-                        .keyboardShortcut(.cancelAction)
-
-                    Spacer()
-
-                    Button("Save") { save() }
-                        .buttonStyle(FlatButtonStyle(primary: true))
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
+                case .every:
+                    everySection
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 18)
+
+            Spacer()
+
+            HStack {
+                Spacer()
+                Button("Save") { save() }
+                    .buttonStyle(FlatButtonStyle(primary: true))
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
         }
-        .frame(width: 380, height: 340)
-        .background(panelBg)
-        .cornerRadius(14)
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-        )
-        .preferredColorScheme(.dark)
     }
 
     private func flatStepper(
@@ -443,6 +488,7 @@ struct AddReminderView: View {
             switch everyMode {
             case .interval:
                 flatStepper(label: "Every", value: $everyValue, unit: $everyUnit)
+                    .help("Minimum 5 min for recurring — shorter values are rounded up")
 
             case .schedule:
                 weekdayChips
@@ -488,29 +534,7 @@ struct AddReminderView: View {
     }
 
     private func flatTimePicker(hour: Binding<Int>, minute: Binding<Int>, prefix: String) -> some View {
-        HStack(spacing: 6) {
-            Text(prefix)
-                .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.5))
-
-            flatMenu(
-                label: String(format: "%02d", hour.wrappedValue),
-                values: hourValues,
-                format: { String(format: "%02d", $0) },
-                action: { hour.wrappedValue = $0 }
-            )
-
-            Text(":")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(.white.opacity(0.3))
-
-            flatMenu(
-                label: String(format: "%02d", minute.wrappedValue),
-                values: minuteValues,
-                format: { String(format: "%02d", $0) },
-                action: { minute.wrappedValue = $0 }
-            )
-        }
+        FlatTimePicker12h(hour24: hour, minute: minute, prefix: prefix)
     }
 
     // MARK: - Save
@@ -531,12 +555,14 @@ struct AddReminderView: View {
         case .every:
             switch everyMode {
             case .interval:
-                let seconds = TimeInterval(everyValue) * everyUnit.seconds
+                let raw = TimeInterval(everyValue) * everyUnit.seconds
+                let seconds = max(raw, ReminderStore.minRecurringInterval)
                 let fire = Date().addingTimeInterval(seconds)
                 onSave(trimmed, fire, seconds, nil)
 
             case .schedule:
                 let weekdays = Array(selectedWeekdays).sorted()
+                guard !weekdays.isEmpty else { return }
                 let fire = ReminderStore.nextWeekdayOccurrence(
                     after: Date(),
                     weekdays: weekdays,
@@ -554,61 +580,28 @@ struct AddReminderView: View {
 struct RemindersListView: View {
     let reminders: [Reminder]
     var onDelete: (UUID) -> Void
-    var onClose: () -> Void
 
+    /// Content-only view (no chrome, no title — host renders header with count).
     var body: some View {
-        VStack(spacing: 0) {
-            dragHandle
-
-            VStack(spacing: 12) {
-                HStack {
-                    Text("Reminders")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.white)
-                    Spacer()
-                    Text("\(reminders.count)")
-                        .font(.system(size: 12).monospacedDigit())
-                        .foregroundColor(.white.opacity(0.4))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Color.white.opacity(0.07))
-                        .cornerRadius(6)
-                }
-
-                if reminders.isEmpty {
+        Group {
+            if reminders.isEmpty {
+                VStack {
                     Spacer()
                     Text("No reminders")
                         .font(.system(size: 13))
                         .foregroundColor(.white.opacity(0.3))
                     Spacer()
-                } else {
-                    ScrollView {
-                        VStack(spacing: 6) {
-                            ForEach(reminders) { r in
-                                reminderRow(r)
-                            }
+                }
+            } else {
+                ScrollView {
+                    VStack(spacing: 6) {
+                        ForEach(reminders) { r in
+                            reminderRow(r)
                         }
                     }
                 }
-
-                HStack {
-                    Spacer()
-                    Button("Close") { onClose() }
-                        .buttonStyle(FlatButtonStyle())
-                        .keyboardShortcut(.cancelAction)
-                }
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 18)
         }
-        .frame(width: 320, height: 300)
-        .background(panelBg)
-        .cornerRadius(14)
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-        )
-        .preferredColorScheme(.dark)
     }
 
     private func reminderRow(_ r: Reminder) -> some View {
@@ -689,7 +682,7 @@ struct RemindersListView: View {
 
 // MARK: - Shared drag handle
 
-private var dragHandle: some View {
+var dragHandle: some View {
     RoundedRectangle(cornerRadius: 2)
         .fill(Color.white.opacity(0.2))
         .frame(width: 36, height: 4)
@@ -699,7 +692,7 @@ private var dragHandle: some View {
 
 // MARK: - Borderless panel
 
-private class BorderlessPanel: NSPanel {
+class BorderlessPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 
@@ -722,7 +715,7 @@ private class BorderlessPanel: NSPanel {
 }
 
 @MainActor
-private func makeFlatPanel(width: CGFloat, height: CGFloat) -> BorderlessPanel {
+func makeFlatPanel(width: CGFloat, height: CGFloat) -> BorderlessPanel {
     let panel = BorderlessPanel(
         contentRect: NSRect(x: 0, y: 0, width: width, height: height),
         styleMask: [.borderless, .nonactivatingPanel],
@@ -738,69 +731,168 @@ private func makeFlatPanel(width: CGFloat, height: CGFloat) -> BorderlessPanel {
     return panel
 }
 
-// MARK: - Panel presenters
+// MARK: - Combined Reminders Window
 
-@MainActor
-func showAddReminderPanel(onSave: @escaping (String, Date?, TimeInterval?, [Int]?) -> Void) {
-    let panel = makeFlatPanel(width: 380, height: 340)
-
-    let hostingView = NSHostingView(
-        rootView: AddReminderView(
-            onSave: { text, fireDate, recurringInterval, weekdays in
-                onSave(text, fireDate, recurringInterval, weekdays)
-                panel.close()
-            },
-            onCancel: {
-                panel.close()
-            }
-        )
-    )
-
-    panel.contentView = hostingView
-    panel.center()
-    panel.makeKeyAndOrderFront(nil)
-    NSApp.activate(ignoringOtherApps: true)
+enum RemindersWindowMode {
+    case list
+    case add
 }
 
 @MainActor
-func showRemindersListPanel(store: ReminderStore) {
-    let panel = makeFlatPanel(width: 320, height: 300)
+final class RemindersWindowState: ObservableObject {
+    @Published var mode: RemindersWindowMode
+    @Published var reminders: [Reminder]
+    let store: ReminderStore
 
-    @MainActor final class State: ObservableObject {
-        @Published var reminders: [Reminder]
-        let store: ReminderStore
+    init(store: ReminderStore, mode: RemindersWindowMode) {
+        self.store = store
+        self.mode = mode
+        self.reminders = store.allPending
+    }
 
-        init(store: ReminderStore) {
-            self.store = store
-            self.reminders = store.allPending
+    func refresh() {
+        reminders = store.allPending
+    }
+
+    func delete(id: UUID) {
+        store.remove(id: id)
+        refresh()
+    }
+
+    func addReminder(text: String, fireDate: Date?, interval: TimeInterval?, weekdays: [Int]?) {
+        store.add(
+            text: text,
+            fireDate: fireDate,
+            recurringInterval: interval,
+            recurringWeekdays: weekdays
+        )
+        refresh()
+        withAnimation(.easeInOut(duration: 0.22)) {
+            mode = .list
         }
+    }
+}
 
-        func delete(id: UUID) {
-            store.remove(id: id)
-            reminders = store.allPending
+struct RemindersWindowView: View {
+    @ObservedObject var state: RemindersWindowState
+    var onClose: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            dragHandle
+            header
+                .padding(.horizontal, 20)
+                .padding(.bottom, 12)
+
+            content
+                .padding(.horizontal, 20)
+                .padding(.bottom, 18)
+        }
+        .frame(width: 380, height: 380)
+        .background(VisualEffectBlur())
+        .cornerRadius(14)
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+        )
+        .preferredColorScheme(.dark)
+        .onExitCommand {
+            switch state.mode {
+            case .add:
+                withAnimation(.easeInOut(duration: 0.22)) { state.mode = .list }
+            case .list:
+                onClose()
+            }
         }
     }
 
-    let state = State(store: store)
+    private var header: some View {
+        HStack(spacing: 10) {
+            if state.mode == .add {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.22)) { state.mode = .list }
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.75))
+                        .frame(width: 28, height: 28)
+                        .background(Color.white.opacity(0.07))
+                        .cornerRadius(7)
+                }
+                .buttonStyle(.plain)
+            }
 
-    struct Wrapper: View {
-        @ObservedObject var state: State
-        var onClose: () -> Void
+            Text(state.mode == .list ? "Reminders" : "New Reminder")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(.white)
 
-        var body: some View {
-            RemindersListView(
-                reminders: state.reminders,
-                onDelete: { state.delete(id: $0) },
-                onClose: onClose
+            Spacer()
+
+
+            Button {
+                onClose()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.7))
+                    .frame(width: 28, height: 28)
+                    .background(Color.white.opacity(0.07))
+                    .cornerRadius(7)
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut("w", modifiers: .command)
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch state.mode {
+        case .list:
+            VStack(spacing: 8) {
+                RemindersListView(
+                    reminders: state.reminders,
+                    onDelete: { state.delete(id: $0) }
+                )
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.22)) { state.mode = .add }
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.5))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 30)
+                        .background(Color.white.opacity(0.05))
+                        .cornerRadius(8)
+                }
+                .buttonStyle(.plain)
+            }
+        case .add:
+            AddReminderView(
+                onSave: { text, fireDate, interval, weekdays in
+                    state.addReminder(text: text, fireDate: fireDate, interval: interval, weekdays: weekdays)
+                }
             )
         }
     }
+}
 
-    let hostingView = NSHostingView(
-        rootView: Wrapper(state: state, onClose: { panel.close() })
+@MainActor
+func showRemindersPanel(store: ReminderStore, initialMode: RemindersWindowMode = .list) {
+    let panel = makeFlatPanel(width: 380, height: 380)
+    let state = RemindersWindowState(store: store, mode: initialMode)
+
+    struct Host: View {
+        @ObservedObject var state: RemindersWindowState
+        var onClose: () -> Void
+        var body: some View {
+            RemindersWindowView(state: state, onClose: onClose)
+        }
+    }
+
+    panel.contentView = NSHostingView(
+        rootView: Host(state: state, onClose: { panel.close() })
     )
-
-    panel.contentView = hostingView
     panel.center()
     panel.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)

@@ -9,7 +9,27 @@ enum Config {
     // Action labels (Done/Later) pinned 14pt from bottom edge of the notch.
     // Works for both heights: 54pt → labels at 40pt, 30pt → labels at 16pt.
     static let labelsBottomInset: CGFloat = 14
-    static let autoHideSeconds: TimeInterval = 10.0
+    static let autoHideSecondsDefault: TimeInterval = 10.0
+    static let autoHideMinSeconds: TimeInterval = 5
+    static let autoHideMaxSeconds: TimeInterval = 60
+    static let autoHideStep: TimeInterval = 5
+
+    static var autoHideSeconds: TimeInterval {
+        let val = UserDefaults.standard.double(forKey: "autoHideSeconds")
+        let raw = val > 0 ? val : autoHideSecondsDefault
+        return max(autoHideMinSeconds, min(autoHideMaxSeconds, raw))
+    }
+
+    /// When true, the overlay never auto-hides — user must click to dismiss.
+    static var keepUntilClicked: Bool {
+        UserDefaults.standard.bool(forKey: "keepUntilClicked")
+    }
+
+    /// Right-click defers the active reminder for this long.
+    static let snoozeSeconds: TimeInterval = 60
+
+    /// How often the overlay polls for newly-due reminders.
+    static let dueCheckInterval: TimeInterval = 5
 
     // Calibrated manually on MacBook Pro 14" (1512x982) to align panel
     // with the physical notch. The API-reported notch rect is ~1pt wider

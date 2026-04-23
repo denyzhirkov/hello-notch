@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pngquant
+        run: brew install pngquant
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Patch version in build-app.sh output
+        run: |
+          sed -i '' \
+            "s/<string>1.0.0<\/string>/<string>${{ steps.version.outputs.VERSION }}<\/string>/" \
+            build-app.sh
+
+      - name: Build app bundle and DMG
+        run: bash build-app.sh
+
+      - name: Ad-hoc code sign
+        run: |
+          codesign --deep --force --sign - HelloNotch.app
+          codesign --verify --deep HelloNotch.app
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: HelloNotch ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: HelloNotch.dmg
+          body: |
+            ## HelloNotch ${{ github.ref_name }}
+
+            ### Install
+            1. Download `HelloNotch.dmg`
+            2. Open DMG, drag app to Applications
+            3. First launch: right-click → Open (Gatekeeper bypass — app is ad-hoc signed, not notarized)
+
+            ### Requirements
+            macOS 14+, MacBook with notch or external monitor

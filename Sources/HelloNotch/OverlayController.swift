@@ -15,19 +15,27 @@ final class OverlayController {
     private var activeDisplayID: CGDirectDisplayID?
 
     private var autoHideTimer: Timer?
-    private var reshowTimer: Timer?
     private var animationTask: Task<Void, Never>?
+
+    /// Blocks automatic reshow of the same due reminder until this moment passes.
+    /// Set by autoHide to Date()+reshowSuppressWindow; cleared by explicit dismiss.
+    private var suppressReshowUntil: Date?
+    private static let reshowSuppressWindow: TimeInterval = 10
 
     let store = ReminderStore()
     private var currentReminder: Reminder?
     private var dueCheckTimer: Timer?
 
+    private var observerTokens: [NSObjectProtocol] = []
+
     deinit {
         dueCheckTimer?.invalidate()
         autoHideTimer?.invalidate()
-        reshowTimer?.invalidate()
         animationTask?.cancel()
-        NotificationCenter.default.removeObserver(self)
+        for token in observerTokens {
+            NotificationCenter.default.removeObserver(token)
+            NSWorkspace.shared.notificationCenter.removeObserver(token)
+        }
     }
 
     // MARK: - Setup
@@ -35,7 +43,7 @@ final class OverlayController {
     func setup() {
         rebuildPanels()
 
-        NotificationCenter.default.addObserver(
+        let screenToken = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
             queue: .main
@@ -44,19 +52,32 @@ final class OverlayController {
                 self?.rebuildPanels()
             }
         }
+        observerTokens.append(screenToken)
+
+        // Timers freeze during system sleep; kick a check immediately on wake
+        // so the first due reminder surfaces without waiting up to 5s.
+        let wakeToken = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.checkDueReminders()
+            }
+        }
+        observerTokens.append(wakeToken)
 
         startDueCheckTimer()
     }
 
     private func rebuildPanels() {
-        // Collapse and remove all existing panels
-        animationTask?.cancel()
-        animationTask = nil
+        // Any in-flight state references soon-to-be-destroyed entries.
+        resetOverlayState()
+
         for entry in entries.values {
             entry.panel.orderOut(nil)
         }
         entries.removeAll()
-        activeDisplayID = nil
 
         for screen in NSScreen.screens {
             guard let displayID = displayID(for: screen) else { continue }
@@ -85,6 +106,18 @@ final class OverlayController {
         }
     }
 
+    /// Clears every piece of overlay state so nothing references stale entries.
+    /// Safe to call multiple times.
+    private func resetOverlayState() {
+        autoHideTimer?.invalidate()
+        autoHideTimer = nil
+        animationTask?.cancel()
+        animationTask = nil
+        currentReminder = nil
+        activeDisplayID = nil
+        suppressReshowUntil = nil
+    }
+
     private func displayID(for screen: NSScreen) -> CGDirectDisplayID? {
         guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
             return nil
@@ -94,7 +127,7 @@ final class OverlayController {
 
     private func startDueCheckTimer() {
         dueCheckTimer = Timer.scheduledTimer(
-            withTimeInterval: 5,
+            withTimeInterval: Config.dueCheckInterval,
             repeats: true
         ) { [weak self] _ in
             Task { @MainActor in
@@ -105,23 +138,47 @@ final class OverlayController {
 
     private func checkDueReminders() {
         guard currentReminder == nil else { return }
-        if let due = store.dueReminders().first {
-            currentReminder = due
-            showPulse(message: due.text)
-        }
+        if let until = suppressReshowUntil, Date() < until { return }
+        suppressReshowUntil = nil
+        guard let due = store.dueReminders().first else { return }
+        presentReminder(due)
     }
 
     // MARK: - Public API
 
+    /// Message-only pulse (debug / ad-hoc). Does not touch `currentReminder`.
     func showPulse(message: String = "New item") {
+        _ = presentOverlay(message: message)
+    }
+
+    /// Show the next due reminder, or hide if none left.
+    func showNextReminder() {
+        if let reminder = store.dueReminders().first {
+            presentReminder(reminder)
+        } else {
+            dismiss()
+        }
+    }
+
+    // MARK: - Presentation
+
+    /// Attempt to show a reminder. Sets `currentReminder` only on success.
+    private func presentReminder(_ reminder: Reminder) {
+        if presentOverlay(message: reminder.text) {
+            currentReminder = reminder
+        }
+    }
+
+    /// Resolves the target screen, configures the panel, and kicks off the show animation.
+    /// Returns false if no overlay could be shown (caller must NOT mutate currentReminder).
+    @discardableResult
+    private func presentOverlay(message: String) -> Bool {
         autoHideTimer?.invalidate()
-        reshowTimer?.invalidate()
 
         let screen = ScreenResolver.activeScreen()
         guard let targetID = displayID(for: screen),
-              let entry = entries[targetID] else { return }
+              let entry = entries[targetID] else { return false }
 
-        // If a different panel was active, collapse it immediately
         if let prevID = activeDisplayID, prevID != targetID, let prevEntry = entries[prevID] {
             animationTask?.cancel()
             let zeroFrame = ScreenResolver.panelFrame(height: 0, notch: prevEntry.notch)
@@ -132,9 +189,10 @@ final class OverlayController {
 
         activeDisplayID = targetID
 
-        // Reset panel to zero height on the target screen before showing
-        let zeroFrame = ScreenResolver.panelFrame(height: 0, notch: entry.notch)
-        entry.panel.setFrame(zeroFrame, display: false)
+        // Hardware notch: start panel at physical notch height so it blends
+        // with the real notch before expanding — gives "notch grows" illusion.
+        let startH: CGFloat = entry.notch.hasHardwareNotch ? entry.notch.notchHeight : 0
+        entry.panel.setFrame(ScreenResolver.panelFrame(height: startH, notch: entry.notch), display: false)
 
         updateView(message: message, entry: entry)
 
@@ -144,56 +202,47 @@ final class OverlayController {
         let height = entry.notch.hasHardwareNotch ? Config.expandedHeight : Config.expandedHeightNoNotch
         animateHeight(to: height, entry: entry)
         scheduleAutoHide()
+        return true
     }
 
-    /// Show the next pending reminder, or hide if none left.
-    func showNextReminder() {
-        if let reminder = store.next() {
-            currentReminder = reminder
-            showPulse(message: reminder.text)
-        } else {
-            currentReminder = nil
-            dismiss()
-        }
-    }
-
-    /// Hard dismiss — no re-show. Used by explicit user actions.
+    /// Hard dismiss — explicit user action, no reshow suppression window.
     private func dismiss() {
         autoHideTimer?.invalidate()
         autoHideTimer = nil
-        reshowTimer?.invalidate()
-        reshowTimer = nil
         currentReminder = nil
+        suppressReshowUntil = nil
         collapsePanel()
     }
 
-    /// Soft hide — collapses panel, schedules re-show if reminder is still due.
+    /// Soft hide — starts suppression window so the same reminder doesn't instantly re-pop.
     private func autoHide() {
         autoHideTimer?.invalidate()
         autoHideTimer = nil
-        let pending = currentReminder
+        let hadPending = currentReminder != nil
         currentReminder = nil
-        collapsePanel()
-
-        // Schedule re-show in 10s if the reminder is still due
-        if pending != nil {
-            reshowTimer?.invalidate()
-            reshowTimer = Timer.scheduledTimer(
-                withTimeInterval: 10,
-                repeats: false
-            ) { [weak self] _ in
-                Task { @MainActor in
-                    self?.checkDueReminders()
-                }
-            }
+        if hadPending {
+            suppressReshowUntil = Date().addingTimeInterval(Self.reshowSuppressWindow)
         }
+        collapsePanel()
     }
 
     private func collapsePanel() {
-        guard let id = activeDisplayID, let entry = entries[id] else { return }
-        animateHeight(to: 0, entry: entry) { [weak self] in
+        guard let id = activeDisplayID, let entry = entries[id] else {
+            activeDisplayID = nil
+            return
+        }
+        // Hardware notch: animate back to physical notch size, then snap invisible
+        // so the panel merges seamlessly with the real notch before disappearing.
+        let collapseTarget: CGFloat = entry.notch.hasHardwareNotch ? entry.notch.notchHeight : 0
+        animateHeight(to: collapseTarget, entry: entry) { [weak self] in
             entry.panel.alphaValue = 0
             entry.panel.ignoresMouseEvents = true
+            if entry.notch.hasHardwareNotch {
+                entry.panel.setFrame(
+                    ScreenResolver.panelFrame(height: 0, notch: entry.notch),
+                    display: false
+                )
+            }
             self?.activeDisplayID = nil
         }
     }
@@ -203,11 +252,14 @@ final class OverlayController {
     private func handleLeftClick() {
         guard let reminder = currentReminder else { return }
         store.markDone(id: reminder.id)
+        currentReminder = nil
         showNextReminder()
     }
 
     private func handleRightClick() {
-        if let reminder = currentReminder {
+        // Fall back to first due if currentReminder was cleared by a racing autoHide.
+        let target = currentReminder ?? store.dueReminders().first
+        if let reminder = target {
             store.snooze(id: reminder.id)
         }
         dismiss()
@@ -226,6 +278,9 @@ final class OverlayController {
 
     private func scheduleAutoHide() {
         autoHideTimer?.invalidate()
+        autoHideTimer = nil
+        // "Keep until clicked" mode: panel stays until an explicit click action.
+        if Config.keepUntilClicked { return }
         autoHideTimer = Timer.scheduledTimer(
             withTimeInterval: Config.autoHideSeconds,
             repeats: false
@@ -262,7 +317,15 @@ final class OverlayController {
     ) {
         animationTask?.cancel()
 
+        if !entry.notch.hasHardwareNotch {
+            animateSlide(expanding: targetHeight > 0, entry: entry, completion: completion)
+            return
+        }
+
         let startHeight = entry.panel.frame.height
+        let expanding = targetHeight > startHeight
+        let startWidthScale: CGFloat = expanding ? 1.0 : 1.1
+        let endWidthScale: CGFloat = expanding ? 1.1 : 1.0
         let duration: Double = 0.35
         let steps = 42 // ~120fps over 0.35s
 
@@ -277,8 +340,66 @@ final class OverlayController {
                     : 1 - pow(-2 * progress + 2, 3) / 2
 
                 let h = startHeight + (targetHeight - startHeight) * t
-                let frame = ScreenResolver.panelFrame(height: h, notch: entry.notch)
+                let scale = startWidthScale + (endWidthScale - startWidthScale) * CGFloat(t)
+                let base = ScreenResolver.panelFrame(height: h, notch: entry.notch)
+                let ear = Config.outerCornerRadius
+                let scaledBody = (base.width - 2 * ear) * scale
+                let scaledWidth = scaledBody + 2 * ear
+                let frame = NSRect(
+                    x: base.midX - scaledWidth / 2,
+                    y: base.minY,
+                    width: scaledWidth,
+                    height: base.height
+                )
                 entry.panel.setFrame(frame, display: true)
+
+                if i < steps {
+                    try? await Task.sleep(nanoseconds: UInt64(duration / Double(steps) * 1_000_000_000))
+                }
+            }
+            completion?()
+        }
+    }
+
+    // Slide the virtual notch panel in/out by animating Y position.
+    // Panel stays full-height so all corners are always correctly rendered;
+    // the screen edge acts as a natural clip as it slides from above.
+    private func animateSlide(
+        expanding: Bool,
+        entry: ScreenEntry,
+        completion: (() -> Void)? = nil
+    ) {
+        let fullHeight = Config.expandedHeightNoNotch
+        let ear = Config.outerCornerRadius
+        let baseX = entry.notch.x - ear
+        let baseW = entry.notch.width + 2 * ear
+        let startY: CGFloat = expanding
+            ? entry.notch.screenMaxY              // above screen
+            : entry.notch.screenMaxY - fullHeight // visible
+        let endY: CGFloat = expanding
+            ? entry.notch.screenMaxY - fullHeight // visible
+            : entry.notch.screenMaxY              // above screen
+        let startWidthScale: CGFloat = expanding ? 1.0 : 1.1
+        let endWidthScale: CGFloat = expanding ? 1.1 : 1.0
+        let duration: Double = 0.35
+        let steps = 42
+
+        animationTask = Task {
+            for i in 0...steps {
+                guard !Task.isCancelled else { return }
+
+                let progress = Double(i) / Double(steps)
+                let t = progress < 0.5
+                    ? 4 * progress * progress * progress
+                    : 1 - pow(-2 * progress + 2, 3) / 2
+
+                let y = startY + (endY - startY) * t
+                let scale = startWidthScale + (endWidthScale - startWidthScale) * CGFloat(t)
+                let ear = Config.outerCornerRadius
+                let scaledBody = (baseW - 2 * ear) * scale
+                let w = scaledBody + 2 * ear
+                let x = baseX + (baseW - w) / 2
+                entry.panel.setFrame(NSRect(x: x, y: y, width: w, height: fullHeight), display: true)
 
                 if i < steps {
                     try? await Task.sleep(nanoseconds: UInt64(duration / Double(steps) * 1_000_000_000))

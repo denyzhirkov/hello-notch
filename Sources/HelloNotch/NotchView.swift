@@ -15,6 +15,8 @@ struct NotchView: View {
     @State private var hoverZone: HoverZone = .none
     @State private var textOpacity: Double = 1.0
     @State private var shimmerOffset: CGFloat = -1.0
+    @State private var leftFlowProgress: CGFloat = 0
+    @State private var rightFlowProgress: CGFloat = 0
 
     private var isHovering: Bool { hoverZone != .none }
 
@@ -29,7 +31,7 @@ struct NotchView: View {
 
     var body: some View {
         GeometryReader { geo in
-            let earInset = hasHardwareNotch ? CGFloat(0) : Config.outerCornerRadius
+            let earInset = Config.outerCornerRadius
             ZStack {
                 // Soft edge
                 notchShape
@@ -40,7 +42,7 @@ struct NotchView: View {
                 notchShape
                     .fill(.black)
 
-                // Green highlight — radial glow from bottom-left
+                // Green — soft ambient glow from bottom-left
                 notchShape
                     .fill(
                         RadialGradient(
@@ -53,9 +55,26 @@ struct NotchView: View {
                             endRadius: min(geo.size.width, geo.size.height) * 0.9
                         )
                     )
-                    .opacity(hoverZone == .left ? 1 : 0)
+                    .opacity(leftFlowProgress)
 
-                // Red highlight — radial glow from bottom-right
+                // Green — glowing rim on the bottom-left edge
+                notchShape
+                    .stroke(
+                        RadialGradient(
+                            colors: [
+                                Color(hex: Config.hoverGreenColor).opacity(0.9),
+                                Color(hex: Config.hoverGreenColor).opacity(0)
+                            ],
+                            center: .bottomLeading,
+                            startRadius: 0,
+                            endRadius: 28
+                        ),
+                        lineWidth: 1.5
+                    )
+                    .blendMode(.screen)
+                    .opacity(leftFlowProgress)
+
+                // Red — soft ambient glow from bottom-right
                 notchShape
                     .fill(
                         RadialGradient(
@@ -68,7 +87,24 @@ struct NotchView: View {
                             endRadius: min(geo.size.width, geo.size.height) * 0.9
                         )
                     )
-                    .opacity(hoverZone == .right ? 1 : 0)
+                    .opacity(rightFlowProgress)
+
+                // Red — glowing rim on the bottom-right edge
+                notchShape
+                    .stroke(
+                        RadialGradient(
+                            colors: [
+                                Color(hex: Config.hoverRedColor).opacity(0.9),
+                                Color(hex: Config.hoverRedColor).opacity(0)
+                            ],
+                            center: .bottomTrailing,
+                            startRadius: 0,
+                            endRadius: 28
+                        ),
+                        lineWidth: 1.5
+                    )
+                    .blendMode(.screen)
+                    .opacity(rightFlowProgress)
 
                 // Shimmer + text — share single .id(pulseID)
                 Group {
@@ -93,14 +129,39 @@ struct NotchView: View {
                     }
                     .clipShape(notchShape)
 
-                    // Reminder text — fades on hover
+                    // Text morphs into button label while flowing to hovered side
                     VStack {
                         Spacer()
-                        Text(message)
-                            .font(.system(size: 10, weight: .regular))
-                            .foregroundStyle(.white)
-                            .opacity(isHovering ? 0.15 : textOpacity)
-                            .padding(.bottom, Config.labelsBottomInset - 7)
+                        ZStack {
+                            let flow = rightFlowProgress - leftFlowProgress
+                            let flowOffset = flow * (geo.size.width / 2 - 30)
+
+                            // Message — fades out and drifts with the flow
+                            Text(message)
+                                .foregroundStyle(.white)
+                                .opacity((1.0 - max(leftFlowProgress, rightFlowProgress)) * textOpacity)
+                                .offset(x: flowOffset)
+
+                            // "Done" — fades in, same position as message → illusion of morphing
+                            HStack(spacing: 3) {
+                                Image(systemName: "checkmark").font(.system(size: 8, weight: .bold))
+                                Text("Done").font(.system(size: 9, weight: .semibold))
+                            }
+                            .foregroundStyle(Color(hex: Config.hoverGreenColor))
+                            .opacity(leftFlowProgress * 0.9)
+                            .offset(x: flowOffset)
+
+                            // "Later" — fades in, same position as message
+                            HStack(spacing: 3) {
+                                Text("Later").font(.system(size: 9, weight: .semibold))
+                                Image(systemName: "clock").font(.system(size: 8, weight: .bold))
+                            }
+                            .foregroundStyle(Color(hex: Config.hoverRedColor))
+                            .opacity(rightFlowProgress * 0.9)
+                            .offset(x: flowOffset)
+                        }
+                        .font(.system(size: 10, weight: .regular))
+                        .padding(.bottom, Config.labelsBottomInset - 7)
                     }
                 }
                 .id(pulseID)
@@ -115,34 +176,6 @@ struct NotchView: View {
                     }
                 }
 
-                // Action labels — appear on hover
-                HStack {
-                    // Done label (left)
-                    HStack(spacing: 3) {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 8, weight: .bold))
-                        Text("Done")
-                            .font(.system(size: 9, weight: .semibold))
-                    }
-                    .foregroundColor(Color(hex: Config.hoverGreenColor))
-                    .opacity(isHovering ? (hoverZone == .left ? 0.8 : 0.25) : 0)
-
-                    Spacer()
-
-                    // Later label (right)
-                    HStack(spacing: 3) {
-                        Text("Later")
-                            .font(.system(size: 9, weight: .semibold))
-                        Image(systemName: "clock")
-                            .font(.system(size: 8, weight: .bold))
-                    }
-                    .foregroundColor(Color(hex: Config.hoverRedColor))
-                    .opacity(isHovering ? (hoverZone == .right ? 0.8 : 0.25) : 0)
-                }
-                .padding(.horizontal, 12)
-                .frame(maxHeight: .infinity, alignment: .bottom)
-                .padding(.bottom, Config.labelsBottomInset - 7)
-
                 // Invisible click zones
                 HStack(spacing: 0) {
                     Color.clear
@@ -156,6 +189,15 @@ struct NotchView: View {
             }
             .clipShape(notchShape)
             .animation(.easeOut(duration: 0.2), value: hoverZone)
+            .onChange(of: hoverZone) { _, zone in
+                withAnimation(.easeInOut(duration: 0.405)) {
+                    switch zone {
+                    case .left:  leftFlowProgress = 1; rightFlowProgress = 0
+                    case .right: leftFlowProgress = 0; rightFlowProgress = 1
+                    case .none:  leftFlowProgress = 0; rightFlowProgress = 0
+                    }
+                }
+            }
             .onContinuousHover { phase in
                 switch phase {
                 case .active(let location):
@@ -170,17 +212,15 @@ struct NotchView: View {
             }
             .padding(.horizontal, earInset)
             .overlay(alignment: .top) {
-                if !hasHardwareNotch {
-                    let r = Config.outerCornerRadius
-                    HStack(spacing: 0) {
-                        InvertedCorner(radius: r, isLeading: false)
-                            .fill(.black)
-                            .frame(width: r, height: r)
-                        Spacer()
-                        InvertedCorner(radius: r, isLeading: true)
-                            .fill(.black)
-                            .frame(width: r, height: r)
-                    }
+                let r = Config.outerCornerRadius
+                HStack(spacing: 0) {
+                    InvertedCorner(radius: r, isLeading: false)
+                        .fill(.black)
+                        .frame(width: r, height: r)
+                    Spacer()
+                    InvertedCorner(radius: r, isLeading: true)
+                        .fill(.black)
+                        .frame(width: r, height: r)
                 }
             }
         }

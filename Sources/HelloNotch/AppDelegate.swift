@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -8,8 +9,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        registerLaunchAgent()
         overlayController.setup()
         setupStatusBar()
+    }
+
+    private func registerLaunchAgent() {
+        let service = SMAppService.agent(plistName: "com.hellonotch.app.launcher.plist")
+        guard service.status == .notRegistered else { return }
+        try? service.register()
     }
 
     private func setupStatusBar() {
@@ -31,8 +39,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSMenuItem(title: "Show Reminders", action: #selector(showReminders), keyEquivalent: "r")
         )
         menu.addItem(.separator())
+        #if DEBUG
         menu.addItem(
             NSMenuItem(title: "Test Pulse", action: #selector(testPulse), keyEquivalent: "t")
+        )
+        menu.addItem(.separator())
+        #endif
+        menu.addItem(
+            NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ",")
         )
         menu.addItem(.separator())
         menu.addItem(
@@ -43,21 +57,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func addReminder() {
-        showAddReminderPanel { [weak self] text, fireDate, recurringInterval, weekdays in
-            self?.overlayController.store.add(
-                text: text,
-                fireDate: fireDate,
-                recurringInterval: recurringInterval,
-                recurringWeekdays: weekdays
-            )
-        }
+        showRemindersPanel(store: overlayController.store, initialMode: .add)
     }
 
     @objc private func showReminders() {
-        showRemindersListPanel(store: overlayController.store)
+        showRemindersPanel(store: overlayController.store, initialMode: .list)
     }
 
+    @objc private func openSettings() {
+        showSettingsPanel()
+    }
+
+    #if DEBUG
     @objc private func testPulse() {
         overlayController.showPulse(message: "New item")
     }
+    #endif
 }

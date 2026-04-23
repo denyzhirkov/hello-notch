@@ -5,6 +5,7 @@ struct NotchInfo {
     let x: CGFloat          // global X of notch left edge
     let screenMaxY: CGFloat // top edge of screen (global)
     let hasHardwareNotch: Bool
+    let notchHeight: CGFloat // physical notch height (0 for virtual)
 }
 
 enum ScreenResolver {
@@ -31,7 +32,8 @@ enum ScreenResolver {
                 width: width,
                 x: notchLeft,
                 screenMaxY: screen.frame.maxY,
-                hasHardwareNotch: true
+                hasHardwareNotch: true,
+                notchHeight: topLeft.height
             )
         }
         // Fallback for screens without notch
@@ -40,7 +42,8 @@ enum ScreenResolver {
             width: fallbackWidth,
             x: screen.frame.midX - fallbackWidth / 2,
             screenMaxY: screen.frame.maxY,
-            hasHardwareNotch: false
+            hasHardwareNotch: false,
+            notchHeight: 0
         )
     }
 
@@ -48,19 +51,23 @@ enum ScreenResolver {
     /// Offset and width calibrated manually (see Config).
     static func panelFrame(height: CGFloat, notch: NotchInfo) -> NSRect {
         if notch.hasHardwareNotch {
+            let ear = Config.outerCornerRadius
             return NSRect(
-                x: notch.x + Config.notchXOffset,
+                x: notch.x + Config.notchXOffset - ear,
                 y: notch.screenMaxY - height,
-                width: notch.width - Config.notchWidthShrink,
+                width: notch.width - Config.notchWidthShrink + 2 * ear,
                 height: height
             )
         } else {
             let ear = Config.outerCornerRadius
+            let fullHeight = Config.expandedHeightNoNotch
+            // Virtual notch panel is always full-height; height==0 means hidden above screen.
+            let y = height == 0 ? notch.screenMaxY : notch.screenMaxY - fullHeight
             return NSRect(
                 x: notch.x - ear,
-                y: notch.screenMaxY - height,
+                y: y,
                 width: notch.width + 2 * ear,
-                height: height
+                height: fullHeight
             )
         }
     }
